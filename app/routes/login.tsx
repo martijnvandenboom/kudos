@@ -1,14 +1,75 @@
 import { Layout } from "~/components/layout";
 import { FormField } from "~/components/form-field";
-import React, { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { ActionFunction, json } from "@remix-run/node";
+import { validateEmail, validateName, validatePassword } from "~/utils/validators.server";
+import { login, register } from "~/utils/auth.server";
+import { useActionData } from "@remix-run/react"
+
+export const action: ActionFunction = async ({ request }) => {
+    const form = await request.formData();
+    const action = form.get("_action");
+    const email = form.get("email");
+    const password = form.get("password");
+    let firstName = form.get("firstName");
+    let lastName = form.get("lastName");
+
+    if (
+        typeof action !== "string" ||
+        typeof email !== "string" ||
+        typeof password !== "string"
+    ) {
+        return json({ error: `Ìnvalid Form Data`, form: action}, { status: 400 });
+    }
+
+    if (
+        action === 'register' && (
+            typeof firstName !== "string" ||
+            typeof lastName !== "string"
+        )
+
+    ) {
+        return json({ error: `Ìnvalid Form Data`, form: action}, { status: 400 });
+    }
+
+    const errors = {
+        email: validateEmail(email),
+        password: validatePassword(password),
+        ...(action === 'register' ? {
+            firstName: validateName(firstName as string || ''),
+            lastName: validateName(lastName as string || ''), 
+        } : {})
+    };
+
+    if (Object.values(errors).some(Boolean))
+        return json({ errors, fields: {email, password, firstName, lastName }, form: action }, { status: 400 });
+
+    switch (action) {
+        case "login": {
+            return await login({ email, password })
+        }
+        case "register": {
+            firstName = firstName as string
+            lastName = lastName as string
+            return await register({ email, password, firstName, lastName })
+        }
+
+        default:
+            return json({ error: `Ìnvalid Form Data`, form: action}, { status: 400 });
+    }
+}  
 
 export default function Login() {
+    const actionData = useActionData();
+    const [formError, setFormError] = useState(actionData?.error || '');
+    const [errors, setErrors] = useState(actionData?.errors || {});
     const [action, setAction] = useState('login');
+    const firstLoad = useRef(true);
     const [formData, setFormData] = useState({
-        email: '',
-        password: '',
-        firstName: '',
-        lastName: ''
+        email: actionData?.fields?.email || '',
+        password: actionData?.fields?.password || '',
+        firstName: actionData?.fields?.firstName || '',
+        lastName: actionData?.fields?.lastName || '',
     })
 
     const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>, field: string) => {
@@ -17,6 +78,33 @@ export default function Login() {
             [field]: event.target.value
         }))
     }
+
+    useEffect(() => {
+        // Clear the form if we switch forms
+        if (!firstLoad.current) {
+            const newState = {
+                email: '',
+                password: '',
+                firstName: '',
+                lastName: ''
+            }
+            setErrors(newState)
+            setFormError('')
+            setFormData(newState)
+        }
+    }, [action])
+
+    useEffect(() => {
+        if (!firstLoad.current) {
+            setFormError('')
+        }
+    }, [formData])
+
+    useEffect(() => {
+        // We don't want to reset errors on page load because we want to see them
+        firstLoad.current = false
+    }, [])
+
 
 return <Layout>
         <div className="h-full flex justify-center items-center flex-col gap-y-4">
@@ -33,6 +121,10 @@ return <Layout>
             }</p>
 
             <form method="post" className="rounded-2xl bg-gray-200 p-6 w-96">
+                <div className="text-xs font-semibold text-center tracking-wide text-red-500 w-full">
+                    {formError}
+                </div>
+
                 <FormField
                     htmlFor="email"
                     label="E-mail"
@@ -40,6 +132,7 @@ return <Layout>
                     value={formData.email}
                     onChange={e => handleInputChange(e, 'email')}
                     autoComplete="email"
+                    error={errors?.email}
                 />
 
                 <FormField
@@ -49,6 +142,7 @@ return <Layout>
                     value={formData.password}
                     onChange={e => handleInputChange(e, 'password')}
                     autoComplete="current-password"
+                    error={errors?.password}
                 />
 
                 {
@@ -58,12 +152,14 @@ return <Layout>
                             label="First Name"
                             value={formData.firstName}
                             onChange={e => handleInputChange(e, 'firstName')}
+                            error={errors?.firstName}
                         />
                         <FormField
                             htmlFor="lastName"
                             label="Last Name"
                             value={formData.lastName}
                             onChange={e => handleInputChange(e, 'lastName')}
+                            error={errors?.lastName}
                         />
                     </> : null
                 }
